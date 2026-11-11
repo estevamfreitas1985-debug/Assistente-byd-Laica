@@ -56,9 +56,11 @@ android {
         create("release") {
             // a chave vem do segredo KEYSTORE_B64 do GitHub (ou é gerada na hora pelo workflow)
             storeFile = file("release.p12")
-            storePassword = System.getenv("KEYSTORE_PASS") ?: "assistente"
+            // sem o segredo, o GitHub manda a senha vazia (não nula): nesse caso vale a senha da chave temporária
+            val senha = System.getenv("KEYSTORE_PASS")?.takeIf { it.isNotBlank() } ?: "assistente"
+            storePassword = senha
             keyAlias = "laica"
-            keyPassword = System.getenv("KEYSTORE_PASS") ?: "assistente"
+            keyPassword = senha
             storeType = "pkcs12"
         }
     }
