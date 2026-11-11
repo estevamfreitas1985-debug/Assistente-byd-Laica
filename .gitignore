@@ -1,0 +1,13 @@
+.gradle/
+build/
+app/build/
+app/release.p12
+app/release.p12.b64
+*.jks
+*.keystore
+chave.txt
+token.txt
+instrucoes.txt
+local.properties
+*.iml
+.idea/
