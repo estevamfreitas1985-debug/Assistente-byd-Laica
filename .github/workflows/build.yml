@@ -1,0 +1,82 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # A chave de assinatura NUNCA fica no repositório.
+      # Para atualizar o app sem desinstalar, crie os segredos KEYSTORE_B64 (arquivo .p12 em base64, alias "laica")
+      # e KEYSTORE_PASS em Settings > Secrets and variables > Actions. Sem eles, cada versão sai com uma chave temporária.
+      - name: Chave de assinatura
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > app/release.p12
+            echo "CHAVE=fixa" >> "$GITHUB_ENV"
+          else
+            keytool -genkeypair -storetype PKCS12 -keystore app/release.p12 \
+              -storepass assistente -keypass assistente -alias laica \
+              -keyalg RSA -keysize 2048 -validity 20000 \
+              -dname "CN=Laica Assistente BYD, C=BR"
+            echo "CHAVE=temporaria" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compilar
+        env:
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: |
+          set -o pipefail
+          touch build.log
+          gradle assembleRelease -PversionCode=${{ github.run_number }} --stacktrace --no-daemon 2>&1 | tee build.log
+
+      - name: Publicar versao
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTAS: ${{ github.event.head_commit.message }}
+        run: |
+          V=0.1.${{ github.run_number }}
+          cp app/build/outputs/apk/release/app-release.apk Laica-AssistenteBYD-$V.apk
+          AVISO=""
+          if [ "$CHAVE" = "temporaria" ]; then
+            AVISO=$'\n\nAssinado com chave temporária: para instalar por cima de outra versão, desinstale a anterior antes.'
+          fi
+          gh release create "v$V" "Laica-AssistenteBYD-$V.apk" --title "Laica $V" --notes "${NOTAS:-Nova versao}${AVISO}"
+
+      - name: Avisar erro
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          touch build.log
+          {
+            echo "Commit: ${{ github.sha }}"
+            echo '```'
+            grep -E "^e: |error:|What went wrong|FAILURE" -A4 build.log | head -120
+            echo '--- fim do log ---'
+            tail -80 build.log
+            echo '```'
+          } > erro.md
+          gh issue create --title "Build ${{ github.run_number }} falhou" --body-file erro.md
